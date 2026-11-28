@@ -87,6 +87,10 @@ impl Workspace {
     /// Show a page of the Settings dialog. The Worktrees page looks at the disk every time it opens.
     pub(crate) fn set_settings_page(&mut self, page: SettingsPage, cx: &mut Context<Self>) {
         self.settings_page = page;
+        if let Some(Modal::Settings { subagents, .. }) = &mut self.modal {
+            subagents.picking = None;
+        }
+        self.settings_scroll = Default::default();
         self.worktrees_page.asking = None;
         if page == SettingsPage::Projects {
             self.load_stored_worktrees(cx);

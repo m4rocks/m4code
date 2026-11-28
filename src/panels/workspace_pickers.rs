@@ -513,6 +513,64 @@ impl Workspace {
                 };
                 ("settings-model-dialog", title, body.into_any_element(), Some(choices))
             }
+            WorkspacePicker::HarnessModels { harness, search } => {
+                use crate::panels::settings_pages::{is_ticked, model_matches, model_rows, tick};
+                let harness = *harness;
+                let Some(Modal::Settings { subagents, .. }) = &self.modal else { return None };
+                let picked = subagents.picked(harness);
+                let catalog = self.store.data.settings.harness_models(harness);
+                let query = search.read(cx).value().to_string();
+                let mut choices = command::Choices::new(&self.picker_nav, &query);
+                let mut list = choices.list("harness-models-list", window).role(gpui::Role::ListBox).aria_label("Models").flex_1().min_h_0().max_h(px(260.0));
+                let mut shown = 0usize;
+                for (n, (model, offered)) in model_rows(catalog, picked).into_iter().filter(|(m, _)| model_matches(&query, m)).enumerate() {
+                    let on = is_ticked(picked, &model.id);
+                    let logo = logos::draw(logos::for_harness(harness), 11.5, if on { accent } else { theme().subtle_foreground }).into_any_element();
+                    let row = command::row(gpui::SharedString::from(format!("harness-models-opt-{n}")), Some(logo), model.name.clone(),
+                        (!offered).then(|| "No longer offered".to_string()), None, on, false)
+                        .role(gpui::Role::ListBoxOption)
+                        .aria_selected(on);
+                    let id = model.id.clone();
+                    // Ticking keeps the dropdown open, so several models can be switched in one go.
+                    list = list.child(choices.add(row, move |ws, _, cx| {
+                        let catalog = ws.store.data.settings.harness_models(harness).to_vec();
+                        if let Some(Modal::Settings { subagents, .. }) = ws.modal.as_mut() {
+                            tick(subagents.picked_mut(harness), &catalog, &id);
+                        }
+                        cx.notify();
+                    }, cx));
+                    shown += 1;
+                }
+                let lookup = self.model_lookups.get(harness);
+                if shown == 0 {
+                    let note = if lookup.loading { None }
+                        else if catalog.is_empty() { Some(format!("{} lists its models once it is enabled.", harness.name())) }
+                        else { Some("No models match.".to_string()) };
+                    list = list.children(note.map(picker::empty_note));
+                }
+                let body = div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(picker::search_input(search))
+                    .child(list)
+                    .when(lookup.loading, |d| {
+                        d.child(
+                            div()
+                                .px(px(6.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .text_size(scaled(11.0))
+                                .text_color(theme().subtle_foreground)
+                                .child(spinner("harness-models-loading", 11.0))
+                                .child("Loading models…"),
+                        )
+                    });
+                ("harness-models-dialog", "MODELS IN THE PICKER", body.into_any_element(), Some(choices))
+            }
             WorkspacePicker::SettingsEffort => {
                 let Some(Modal::Settings { effort, .. }) = &self.modal else { return None };
                 let current = *effort;

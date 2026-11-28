@@ -173,7 +173,7 @@ pub const PROVIDER: Provider = Provider {
     missing: "agy was not found. Antigravity subagents need the Antigravity CLI installed.",
     // Google's FAQ names Claude Code among the third-party software barred from Antigravity logins, under Section 6 of
     // the Antigravity Additional Terms (https://antigravity.google/docs/faq, https://antigravity.google/terms).
-    warning: Some("Google's Antigravity terms forbid using another company's agent, such as Claude Code, with a personal Google sign-in. That covers the Free, AI Plus, Pro and Ultra plans. Google can suspend or terminate the Antigravity and Gemini CLI accounts of anyone who does. Switch these on at your own risk."),
+    warning: Some("Google's Antigravity terms forbid using another company's agent, such as Claude Code, with a personal Google sign-in. That covers the Free, AI Plus, Pro and Ultra plans. Google can suspend or terminate the Antigravity and Gemini CLI accounts of anyone who does. Enable cross-harness subagents at your own risk."),
     cross_harness_default: false,
     task_args: super::runner::antigravity_args,
     environment: super::runner::no_env,

@@ -8,7 +8,7 @@ It's a personal project with rough edges: macOS and Linux are lightly tested, an
 
 ## Supported agents
 
-Every session runs in m4code's native chat view over the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Sign-in stays with each agent. **Settings → Harnesses** enables or disables harnesses, selects which models appear in the picker, and configures subagent and edit permissions.
+Every session runs in m4code's native chat view over the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Sign-in stays with each agent. **Settings → Harnesses** enables or disables harnesses, selects which models appear in the picker, and configures subagent and edit permissions. Settings uses a shared sidebar and flat sections throughout. Each harness opens in the same pane, with its models ticked on and off in a model dropdown and a read-only feature checklist drawn from its adapter declarations.
 
 | Agent | Requirements | Notes |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ When upgrading from a version with multiple Claude accounts, resumed sessions us
 > - Rewind and fork are off in Antigravity sessions, and m4code doesn't compact one itself. Only Antigravity's own `/compact` runs, when Antigravity lists it.
 > - Conversations from other models can't be handed to Antigravity. You can hand an Antigravity conversation to another model yourself, but auto-handoff and an agent's `set_model` can't.
 > - Antigravity can't be the text generation model. A saved choice switches back to the local summary.
-> - **Allow subagent delegation** and **Allow cross-harness subagents** start off for Antigravity. Turn them on at your own risk.
+> - **Allow cross-harness subagents** starts off for Antigravity. Turn it on at your own risk.
 > - Antigravity sessions don't get `start_code_session` or `read_code_session`, so they can't start sessions or read other ones.
 > - Antigravity's usage meter updates only when you press refresh.
 
@@ -71,7 +71,7 @@ When upgrading from a version with multiple Claude accounts, resumed sessions us
 
 - **Shared MCP subagent tools**: Sessions across all harnesses share `spawn_subagent`, `list_subagents`, `send_subagent_message`, `wait_subagent`, and `stop_subagent` (targeting adapters enabled for subagent use in Settings). Children run in the parent's working folder without stealing focus, appear in the right sidebar, and fold their report back into the parent chat. Follow-ups reuse the child session, stopping a parent stops its children, and a read-only parent cannot grant edits. Sessions are conversations for the user and are created only when the user wants one. Subagents are workers the model uses to delegate work within its current session.
 - **Claude Code native subagents**: Claude Code can also start Codex, OpenCode, and (opt-in) Antigravity subagents directly. These plugin-run children receive the shared workspace context tool. Desktop-managed children have their own records and can use the session tools. Each streams its work in its own task view with configurable effort (`max` maps to Codex's `xhigh`; Antigravity caps at the model's highest thinking level) and supports live or queued follow-ups.
-- **Cross-harness subagents**: **Allow cross-harness subagents** (**Settings → Harnesses**) decides whether other harnesses can run a harness as a subagent and whether its sessions can start subagents or sessions on other harnesses, or move a conversation to them on their own, through `set_model` or auto-handoff. A subagent on another harness needs it on for both. It starts on for every harness except Antigravity.
+- **Cross-harness subagents**: **Allow cross-harness subagents** (**Settings → Harnesses**) decides whether other harnesses can run a harness as a subagent and whether its sessions can start subagents or sessions on other harnesses, or move a conversation to them on their own, through `set_model` or auto-handoff. This single switch controls both directions; a subagent on another harness needs it on for both. Turning it off also prevents m4code from launching this harness as a subagent. Antigravity’s native `/swarm` and `/teamwork` remain available. It starts on for every harness except Antigravity.
 - **Edit permissions**: With **Allow edits** enabled, a subagent acts without Claude Code's permission rules. Read-only Antigravity runs in an isolated folder under m4code's data directory with a hook that permits only reading and searching (your personal Antigravity rules, skills, and MCP servers do not load there).
 
 ### Skills

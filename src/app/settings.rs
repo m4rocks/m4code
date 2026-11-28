@@ -238,21 +238,25 @@ impl Workspace {
         }
     }
 
-    /// Opens a harness's configuration popup over the Harnesses page.
+    /// Opens a harness inside the Settings content pane.
     pub(crate) fn open_harness_dialog(&mut self, harness: Harness, window: &mut Window, cx: &mut Context<Self>) {
-        let search = self.modal_input_then("", "Search models", Self::close_harness_dialog, window, cx);
         if let Some(Modal::Settings { subagents, .. }) = self.modal.as_mut() {
-            subagents.picking = Some(HarnessDialog { harness, search, focus: cx.focus_handle() });
+            subagents.picking = Some(HarnessDialog { harness });
         }
+        if let Some(Modal::Settings { list_focus, .. }) = &self.modal {
+            window.focus(list_focus, cx);
+        }
+        self.settings_scroll = Default::default();
         self.load_models(cx);
     }
 
-    /// Closes the harness popup, keeping what was switched; Settings' Save persists it.
+    /// Returns to the harness list, keeping edits until Settings closes.
     pub(crate) fn close_harness_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(Modal::Settings { subagents, list_focus, .. }) = self.modal.as_mut() {
             subagents.picking = None;
             window.focus(list_focus, cx);
         }
+        self.settings_scroll = Default::default();
     }
 
     pub(crate) fn harness_dialog_open(&self) -> bool {
@@ -262,13 +266,11 @@ impl Workspace {
     /// Keys for the open Settings dialog, seen before the focused control. Up and Down change the page and Enter saves
     /// only while the category list has focus. Tab uses the native focus order for every control.
     pub(crate) fn settings_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        // The popup over Harnesses closes on Escape without closing Settings itself.
-        if self.harness_dialog_open() {
-            if ev.keystroke.key == "escape" {
-                self.close_harness_dialog(window, cx);
-                cx.stop_propagation();
-                cx.notify();
-            }
+        // Escape returns from a harness to the harness list, once any dropdown over it has closed.
+        if self.harness_dialog_open() && self.picker.is_none() && ev.keystroke.key == "escape" {
+            self.close_harness_dialog(window, cx);
+            cx.stop_propagation();
+            cx.notify();
             return;
         }
         // Escape closes any active universal picker over Settings without closing Settings itself.

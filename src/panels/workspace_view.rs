@@ -467,7 +467,6 @@ impl Render for Workspace {
         let menu = self.render_menu(window, cx);
         let picker_dialog = self.render_picker(window, cx);
         let modal = self.render_modal(window, cx);
-        let agent_dialog = self.render_harness_dialog(window, cx);
         let question_popover = self.render_question_popover(window, cx);
         let toast = self.render_toast(cx);
         // The top bar's own background is the gutter above the panels; only an update banner needs real space.
@@ -642,7 +641,6 @@ impl Render for Workspace {
             .children(modal)
             .children(self.render_palette(cx))
             .children(picker_dialog)
-            .children(agent_dialog)
             .children(question_popover)
             .children(toast)
     }

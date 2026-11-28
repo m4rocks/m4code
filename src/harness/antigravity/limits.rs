@@ -131,7 +131,7 @@ pub fn parse(json: &str, seen_at: i64) -> Option<Vec<Pool>> {
 /// What the sidebar marks a pool's row with, by the models in it.
 #[derive(Debug, PartialEq)]
 pub enum PoolMark {
-    /// `Gemini Models`.
+    /// Gemini groups, including model-specific pools.
     Gemini,
     /// `Claude and GPT models`.
     ClaudeAndGpt,
@@ -142,7 +142,7 @@ pub enum PoolMark {
 pub fn mark(pool: &str) -> PoolMark {
     let lower: Vec<String> = pool.split_whitespace().filter(|w| !w.eq_ignore_ascii_case("models")).map(str::to_lowercase).collect();
     match lower.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["gemini"] => PoolMark::Gemini,
+        ["gemini", ..] => PoolMark::Gemini,
         ["claude", "and", "gpt"] => PoolMark::ClaudeAndGpt,
         [first, ..] => PoolMark::Other(symbol(first)),
         [] => PoolMark::Other(symbol(&pool.to_lowercase())),
@@ -207,7 +207,9 @@ mod tests {
     fn each_pool_gets_the_mark_of_its_models() {
         assert_eq!(mark("Gemini Models"), PoolMark::Gemini);
         assert_eq!(mark("Claude and GPT models"), PoolMark::ClaudeAndGpt);
-        assert_eq!(mark("Gemini custom pool"), PoolMark::Other("Ge".into()));
+        assert_eq!(mark("Gemini custom pool"), PoolMark::Gemini);
+        assert_eq!(mark("Gemini 4 Argon"), PoolMark::Gemini);
+        assert_eq!(mark("GEMINI 4 Argon Models"), PoolMark::Gemini);
         assert_eq!(mark("Mistral and Llama models"), PoolMark::Other("Mi".into()));
     }
 }

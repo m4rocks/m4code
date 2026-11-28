@@ -155,6 +155,7 @@ pub struct AgentModel {
 /// What the settings page holds for one agent.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentChoice {
+    /// Legacy receiving-delegation flag, kept in sync with the single cross-harness switch.
     pub on: bool,
     /// The ids of the models switched on, each one agent type.
     pub models: Vec<String>,
@@ -173,8 +174,8 @@ pub struct CustomSubagents(pub AgentMap<AgentChoice>);
 impl Default for CustomSubagents {
     fn default() -> Self {
         Self(AgentMap::from_fn(|agent| {
-            let enabled = agent != Agent::Antigravity;
             let cross_harness = agent.provider().cross_harness_default;
+            let enabled = cross_harness;
             AgentChoice { on: enabled, edits: enabled, cross_harness, ..Default::default() }
         }))
     }
@@ -206,12 +207,15 @@ impl<'de> Deserialize<'de> for CustomSubagents {
         for agent in Agent::ALL {
             let key = agent.key();
             let defaults = result.get(agent).clone();
+            // Merge the old independent switches without enabling previously refused delegation.
+            let on = field::<_, D::Error>(&mut stored, key, defaults.on)?;
+            let cross_harness = field::<_, D::Error>(&mut stored, &format!("{key}_cross_harness"), defaults.cross_harness)? && on;
             *result.get_mut(agent) = AgentChoice {
-                on: field::<_, D::Error>(&mut stored, key, defaults.on)?,
+                on: cross_harness,
                 models: field::<_, D::Error>(&mut stored, &format!("{key}_models"), vec![])?,
                 edits: field::<_, D::Error>(&mut stored, &format!("{key}_edits"), defaults.edits)?,
                 catalog: field::<_, D::Error>(&mut stored, &format!("{key}_catalog"), vec![])?,
-                cross_harness: field::<_, D::Error>(&mut stored, &format!("{key}_cross_harness"), defaults.cross_harness)?,
+                cross_harness,
             };
         }
         Ok(result)
@@ -344,6 +348,21 @@ mod tests {
         assert!(!explicit.get(Agent::Codex).edits);
         assert!(explicit.get(Agent::OpenCode).on);
         assert!(!explicit.get(Agent::OpenCode).edits);
+    }
+
+    #[test]
+    fn legacy_delegation_switches_merge_without_enabling_either_direction() {
+        for on in [false, true] {
+            for cross in [false, true] {
+                let saved = serde_json::json!({ "codex": on, "codex_cross_harness": cross });
+                let settings: CustomSubagents = serde_json::from_value(saved).unwrap();
+                let choice = settings.get(Agent::Codex);
+                assert_eq!(choice.on, on && cross);
+                assert_eq!(choice.cross_harness, on && cross);
+                let reloaded: CustomSubagents = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+                assert_eq!(settings, reloaded);
+            }
+        }
     }
 
     #[test]

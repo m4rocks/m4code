@@ -221,11 +221,9 @@ pub enum Modal {
     },
 }
 
-/// The configuration popup opened over Settings → Harnesses, uniform across every harness adapter.
+/// The inline configuration page opened from Settings → Harnesses.
 pub struct HarnessDialog {
     pub harness: Harness,
-    pub search: Entity<InputState>,
-    pub focus: FocusHandle,
 }
 
 /// The Harnesses page of the Settings dialog, as edited so far.
@@ -235,7 +233,7 @@ pub struct HarnessesForm {
     /// The ids of the Claude Code models ticked for the picker.
     pub claude_models: Vec<String>,
     pub claude_subagents: harness::SubagentAccess,
-    /// The harness whose configuration popup is open over the page.
+    /// The harness whose inline configuration page is open.
     pub picking: Option<HarnessDialog>,
 }
 
@@ -330,6 +328,8 @@ pub enum WorkspacePicker {
     Git(GitPicker),
     /// Settings -> General: Model selector (default, text generation, or auto-handoff).
     SettingsModel { search: Entity<InputState>, target: SettingsModelTarget },
+    /// Settings -> Harnesses -> a harness: which of its models show in the model picker, ticked on and off.
+    HarnessModels { harness: Harness, search: Entity<InputState> },
     /// Settings -> General: Default effort selector.
     SettingsEffort,
     /// Settings -> General: Default permission mode selector.
@@ -590,7 +590,6 @@ pub struct Workspace {
     pub modal: Option<Modal>,
     pub modal_focus: FocusHandle,
     pub modal_tab_cycle: modal::DialogTabCycle,
-    pub harness_tab_cycle: modal::DialogTabCycle,
     picker_return_focus: Option<FocusHandle>,
     /// The Settings category last shown. Kept here because opening Settings builds the modal anew; not saved to disk.
     pub settings_page: SettingsPage,
@@ -600,7 +599,6 @@ pub struct Workspace {
     pub skills_page: skills::SkillsPage,
     /// Smooth wheel scrolling of the settings page.
     pub settings_scroll: crate::panels::glide::Smooth,
-    pub harness_dialog_scroll: crate::panels::glide::Smooth,
     /// Whether this run already said it couldn't write a session's tool settings file (said at most once).
     pub menu: Option<Menu>,
     /// Active universal anchored picker dropdown (model, project, branch & worktree, settings, scope, editor).
@@ -765,13 +763,11 @@ impl Workspace {
             modal: None,
             modal_focus: cx.focus_handle(),
             modal_tab_cycle: modal::DialogTabCycle::new(window, cx),
-            harness_tab_cycle: modal::DialogTabCycle::new(window, cx),
             picker_return_focus: None,
             settings_page: SettingsPage::default(),
             worktrees_page: Default::default(),
             skills_page: Default::default(),
             settings_scroll: Default::default(),
-            harness_dialog_scroll: Default::default(),
             menu: None,
             picker: None,
             toast: None,
@@ -1089,6 +1085,13 @@ impl Workspace {
         self.load_models(cx);
         let search = self.picker_search("Filter models…", window, cx);
         self.show_picker(at, WorkspacePicker::SettingsModel { search, target }, window, cx);
+    }
+
+    pub fn open_harness_models_picker(&mut self, harness: Harness, at: crate::panels::widgets::Dropdown, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.load_models(cx);
+        let search = self.picker_search("Filter models…", window, cx);
+        self.show_picker(at, WorkspacePicker::HarnessModels { harness, search }, window, cx);
     }
 
     pub fn open_settings_effort_picker(&mut self, at: crate::panels::widgets::Dropdown, window: &mut Window, cx: &mut Context<Self>) {

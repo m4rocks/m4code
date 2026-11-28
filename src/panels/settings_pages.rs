@@ -2,13 +2,14 @@
 //! with shared model and subagent controls and provider-specific configuration.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, deferred, div, px,
+    AnyElement, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::base::FocusTrapElement;
+use gpui_kit::assets::IconName;
+use crate::panels::widgets::icon;
 
-use crate::app::{Act, Lookup, Modal, Workspace};
+use crate::app::{Act, Lookup, Modal, Workspace, WorkspacePicker};
 use crate::harness::Harness;
 use crate::harness::subagents::AgentModel;
 use crate::panels::logos;
@@ -25,24 +26,23 @@ fn warn(text: impl Into<SharedString>) -> Div {
     div().text_size(crate::panels::scale::px(11.0)).text_color(theme().warning).child(text.into())
 }
 
-/// A labelled Settings section: uppercase header (with an optional trailing control) over a single rounded card whose
-/// child rows are separated by crisp hairlines.
+/// A flat Settings section with a quiet heading and separated rows.
 pub fn settings_group(title: impl Into<SharedString>, trailing: Option<AnyElement>, rows: Vec<AnyElement>) -> Div {
     let header = div()
         .flex()
         .items_center()
         .justify_between()
         .gap(px(8.0))
-        .child(section_label(title))
+        .child(section_label(title.into().to_string().to_uppercase()))
         .children(trailing);
-    let mut card = crate::panels::ui::card::outlined(theme().panel_border).w_full();
+    let mut card = div().flex().flex_col().w_full();
     for (i, row) in rows.into_iter().enumerate() {
         if i > 0 {
             card = card.child(crate::panels::ui::separator::horizontal());
         }
         card = card.child(row);
     }
-    div().flex().flex_col().gap(px(7.0)).w_full().child(header).child(card)
+    div().flex().flex_col().gap(px(2.0)).w_full().child(header.px(px(14.0))).child(card)
 }
 
 /// An On/Off row that runs `flip` on the workspace when clicked, with an optional faint `tag` after the label.
@@ -56,20 +56,40 @@ pub fn switch_row(
 ) -> gpui_kit::base::Button {
     crate::panels::ui::switch::row(id)
         .child(
-            div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .items_center()
-                .gap(px(8.0))
+            div().flex().flex_col().flex_1().min_w_0().gap(px(3.0))
                 .child(label.into())
-                .children(tag.map(|tag| div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(crate::panels::scale::px(11.0)).text_color(theme().subtle_foreground).child(tag))),
+                .children(tag.map(faint)),
         )
         .child(switch(on))
         .on_click(cx.listener(move |ws, _: &ClickEvent, window, cx| {
             flip(ws, window, cx);
             cx.notify();
         }))
+}
+
+/// The checklist reads the adapter declarations used by the action guards; no per-harness feature table.
+fn adapter_feature_rows(harness: Harness) -> Vec<(&'static str, bool, &'static str, Option<&'static str>)> {
+    use crate::harness::capabilities::{Capability, Initiator};
+    let adapter = harness.adapter();
+    let caps = adapter.capabilities;
+    let declared = [
+        ("Rewind messages", caps.rewind),
+        ("Fork conversations", caps.fork),
+        ("Continue in a fresh session", caps.continue_fresh),
+        ("Client compaction fallback", caps.compaction_fallback),
+        ("Background text generation", caps.text_generation),
+        ("Receive a handoff", caps.handoff_in.allows(Initiator::User)),
+        ("Hand off to another harness", caps.handoff_out.allows(Initiator::User)),
+        ("Automatic incoming handoff", caps.handoff_in.allows(Initiator::Automatic)),
+        ("Automatic outgoing handoff", caps.handoff_out.allows(Initiator::Automatic)),
+        ("Run as a subagent", caps.subagent),
+        ("Start subagents", caps.spawns_subagents),
+        ("Mid-turn steering", if adapter.steers { Capability::Allowed } else { Capability::Refused("This adapter queues follow-up messages until the turn finishes.") }),
+        ("Usage readings", if adapter.usage.is_some() { Capability::Allowed } else { Capability::Refused("This adapter does not provide usage readings.") }),
+        ("Client control of native compaction", if adapter.native_compaction_managed { Capability::Allowed } else { Capability::Refused("Native compaction is not controlled through this adapter.") }),
+    ];
+    declared.into_iter().map(|(label, capability)| (label, capability.allowed(),
+        if capability.allowed() { "Supported" } else { "Unavailable" }, capability.refusal())).collect()
 }
 
 /// Adds `item` to `items`, or removes it when it is there.
@@ -108,18 +128,12 @@ fn flip_harness_enabled(ws: &mut Workspace, harness: Harness, cx: &mut Context<W
     }
 }
 
-/// Flips an agent's "Allow use as subagents" switch inside its harness popup.
-fn flip_cross_harness(ws: &mut Workspace, harness: Harness) {
+/// One switch controls receiving delegated work and delegation across harnesses.
+fn flip_cross_harness(ws: &mut Workspace, harness: Harness, cx: &mut Context<Workspace>) {
     let Some(Modal::Settings { subagents, .. }) = ws.modal.as_mut() else { return };
     let mut access = subagents.access(harness);
     access.cross_harness = !access.cross_harness;
-    subagents.set_access(harness, access);
-}
-
-fn flip_subagent(ws: &mut Workspace, harness: Harness, cx: &mut Context<Workspace>) {
-    let Some(Modal::Settings { subagents, .. }) = ws.modal.as_mut() else { return };
-    let mut access = subagents.access(harness);
-    access.on = !access.on;
+    access.on = access.cross_harness;
     subagents.set_access(harness, access);
     ws.load_models(cx);
 }
@@ -143,31 +157,31 @@ fn harness_status(harness: Harness, enabled: bool, subagents: &crate::app::Harne
         1 => " · 1 model".to_string(),
         n => format!(" · {n} models"),
     };
-    let delegation = if access.on { "subagents on" } else { "subagents off" };
+    let delegation = if access.on { "cross-harness subagents on" } else { "cross-harness subagents off" };
     (format!("Enabled{models} · {delegation}"), theme().muted_foreground)
 }
 
 /// The models to list: those the agent offers, then any switched on that it no longer offers, so they can be
 /// switched off. The flag says whether the agent still offers the model.
-fn model_rows(catalog: &[AgentModel], on: &[String]) -> Vec<(AgentModel, bool)> {
+pub(super) fn model_rows(catalog: &[AgentModel], on: &[String]) -> Vec<(AgentModel, bool)> {
     let gone = on.iter().filter(|id| !catalog.iter().any(|m| &m.id == *id)).map(|id| AgentModel { id: id.clone(), name: id.clone() });
     catalog.iter().cloned().map(|m| (m, true)).chain(gone.map(|m| (m, false))).collect()
 }
 
 /// How many of the models the agent offers are switched on, as "2 of 107 on". A model switched on that the agent no
 /// longer offers isn't one of them.
-fn on_count(catalog: &[AgentModel], on: &[String]) -> String {
+pub(super) fn on_count(catalog: &[AgentModel], on: &[String]) -> String {
     format!("{} of {} on", catalog.iter().filter(|m| is_ticked(on, &m.id)).count(), catalog.len())
 }
 
 /// Whether `id` is ticked. A harness nobody has set up yet has every model ticked, which `ticked` saves as no list.
-fn is_ticked(ticked: &[String], id: &str) -> bool {
+pub(super) fn is_ticked(ticked: &[String], id: &str) -> bool {
     ticked.is_empty() || ticked.iter().any(|t| t == id)
 }
 
 /// Tick or untick `id` among `catalog`'s models. The last ticked model stays ticked, so the model picker always has
 /// one and an empty list only ever means all of them.
-fn tick(ticked: &mut Vec<String>, catalog: &[AgentModel], id: &str) {
+pub(super) fn tick(ticked: &mut Vec<String>, catalog: &[AgentModel], id: &str) {
     if ticked.is_empty() {
         *ticked = catalog.iter().map(|m| m.id.clone()).collect();
     }
@@ -181,7 +195,7 @@ fn tick(ticked: &mut Vec<String>, catalog: &[AgentModel], id: &str) {
 }
 
 /// Whether `model` fits what was typed in the picker's search: every word, in its name or its id, ignoring case.
-fn model_matches(query: &str, model: &AgentModel) -> bool {
+pub(super) fn model_matches(query: &str, model: &AgentModel) -> bool {
     let haystack = format!("{} {}", model.name, model.id).to_lowercase();
     query.to_lowercase().split_whitespace().all(|word| haystack.contains(word))
 }
@@ -276,7 +290,7 @@ impl Workspace {
             .flex_col()
             .gap(px(12.0))
             .child(settings_group("CONNECTED HARNESSES", None, rows))
-            .child(faint("Click any harness to choose its models and configure how it behaves."))
+            .child(faint("Click any harness to choose its models and configure how it behaves.").px(px(14.0)))
     }
 
     fn subagent_controls(&self, harness: Harness, cx: &mut Context<Self>) -> Div {
@@ -284,217 +298,86 @@ impl Workspace {
         let access = subagents.access(harness);
         let key = harness.key();
         let refusal = harness.adapter().capabilities.subagent.refusal();
-        let mut controls = div().flex().flex_col().gap(px(8.0)).child(switch_row(
-            SharedString::from(format!("agent-dialog-{key}-on")),
-            "Allow subagent delegation",
-            Some(refusal.unwrap_or("Let other sessions delegate background tasks to this harness").into()),
-            access.on && refusal.is_none(),
-            move |ws, _, cx| flip_subagent(ws, harness, cx),
-            cx,
-        ).disabled(refusal.is_some()));
-        controls = controls.child(switch_row(
+        let mut controls = div().flex().flex_col().child(switch_row(
             SharedString::from(format!("agent-dialog-{key}-cross-harness")),
             "Allow cross-harness subagents",
-            Some("Run as a subagent of other harnesses, and start subagents on them".into()),
-            access.cross_harness,
-            move |ws, _, _| flip_cross_harness(ws, harness),
+            Some(refusal.unwrap_or("Let other harnesses call this one, and let this harness call others").into()),
+            access.cross_harness && refusal.is_none(),
+            move |ws, _, cx| flip_cross_harness(ws, harness, cx),
             cx,
-        ));
+        ).disabled(refusal.is_some()));
         if let Some(warning) = harness.agent().and_then(|agent| agent.provider().warning) {
-            controls = controls.child(warn(warning));
+            controls = controls.child(div().px(px(14.0)).pb(px(8.0)).child(warn(warning)));
         }
         controls
     }
 
-    fn model_list(&self, harness: Harness, search: &gpui::Entity<InputState>, cx: &mut Context<Self>) -> Div {
-        let Some(Modal::Settings { subagents, .. }) = &self.modal else { return div() };
-        let picked = subagents.picked(harness);
-        let subagents_on = subagents.access(harness).on;
-        let catalog = self.store.data.settings.harness_models(harness);
-        let query = search.read(cx).value().to_string();
-        let mut list = div().flex().flex_col().gap(px(6.0));
-        let mut shown = 0;
-        for (model, offered) in model_rows(catalog, picked).into_iter().filter(|(m, _)| model_matches(&query, m)) {
-            let tag = (!offered).then_some("No longer offered");
-            let id = model.id.clone();
-            list = list.child(switch_row(
-                gpui::SharedString::from(format!("harness-dialog-model-{}", model.id)),
-                model.name.clone(),
-                tag.map(Into::into),
-                is_ticked(picked, &model.id),
-                move |ws, _, _| {
-                    let catalog = ws.store.data.settings.harness_models(harness).to_vec();
-                    if let Some(Modal::Settings { subagents, .. }) = ws.modal.as_mut() {
-                        tick(subagents.picked_mut(harness), &catalog, &id);
-                    }
-                },
-                cx,
-            ));
-            shown += 1;
-        }
-        let lookup = self.model_lookups.get(harness);
-        if lookup.loading && catalog.is_empty() {
-            list = list.child(faint(format!("Loading {}'s models…", harness.name())));
-        } else if let Some(why) = lookup.error.as_ref().filter(|_| catalog.is_empty()) {
-            list = list.child(warn(format!("Couldn't load {}'s models: {why}", harness.name())));
-        } else if catalog.is_empty() {
-            list = list.child(faint(format!("{} lists its models once it is enabled.", harness.name())));
-        } else if shown == 0 {
-            list = list.child(faint(format!("No model matches “{}”.", query.trim())));
-        }
-        let count = if catalog.is_empty() { String::new() } else { on_count(catalog, picked) };
-        let about = if subagents_on {
-            "Enabled models show up in the model picker and can be used by subagents."
-        } else {
-            "Enabled models show up in the model picker."
-        };
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .gap(px(8.0))
-            .child(div().flex().w_full().mt(px(4.0)).items_center().justify_between().child(section_label("MODELS")).child(faint(count)))
-            .child(faint(about))
-            .child(Input::new(search))
-            .child(list)
-    }
-
-    /// Harness configuration, including shared model and subagent controls.
-    pub(crate) fn render_harness_dialog(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// Harness details use the same scroll pane and section layout as every Settings page.
+    pub(crate) fn render_harness_settings(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let Some(Modal::Settings { claude, skills_field, costly, subagents, chrome, .. }) = &self.modal else { return None };
         let picking = subagents.picking.as_ref()?;
-        let viewport = window.viewport_size();
-        let scaled = crate::panels::scale::px;
+        let harness = picking.harness;
+        let enabled = subagents.enabled.contains(&harness);
+        let mut connection = vec![switch_row(
+            "harness-detail-enabled",
+            format!("Enable {}", harness.name()),
+            Some("Make this harness available for new sessions".into()),
+            enabled,
+            move |ws, _, cx| flip_harness_enabled(ws, harness, cx),
+            cx,
+        ).into_any_element()];
+        if harness == Harness::Claude {
+            connection.push(div().px(px(14.0)).py(px(10.0)).flex().flex_col().gap(px(6.0))
+                .child(section_label("EXECUTABLE"))
+                .child(executable_field(claude, self)).into_any_element());
+        }
+        let mut body = div().flex().flex_col().gap(px(20.0)).w_full()
+            .child(settings_group("CONNECTION", None, connection))
+            .child(settings_group("DELEGATION", None, vec![self.subagent_controls(harness, cx).into_any_element()]));
+        let catalog = self.store.data.settings.harness_models(harness);
+        let count = on_count(catalog, subagents.picked(harness));
+        let open = matches!(self.picker_kind(), Some(WorkspacePicker::HarnessModels { .. }));
+        let about = if subagents.access(harness).on { "Shown in the model picker and offered to subagents" } else { "Shown in the model picker" };
+        let lookup = self.model_lookups.get(harness);
+        let current = if !catalog.is_empty() { count }
+            else if lookup.loading { "Loading…".into() }
+            else if lookup.error.is_some() { "Couldn't load".into() }
+            else { "None loaded".into() };
+        let selector = super::settings_view::settings_picker_row("harness-model-selector", ("Models", about), current, open,
+            move |ws, at, window, cx| ws.open_harness_models_picker(harness, at, window, cx), cx);
+        let mut models = vec![selector.into_any_element()];
+        if let Some(why) = lookup.error.as_ref().filter(|_| catalog.is_empty()) {
+            models.push(div().px(px(14.0)).pb(px(8.0)).child(warn(format!("Couldn't load {}'s models: {why}", harness.name()))).into_any_element());
+        }
+        body = body.child(settings_group("MODELS", None, models));
+        if harness == Harness::Claude {
+            let mut options = vec![switch_row("harness-dialog-claude-chrome", "Claude in Chrome",
+                Some("Start new sessions with browser integration".into()), *chrome,
+                |ws, _, _| { if let Some(Modal::Settings { chrome, .. }) = &mut ws.modal { *chrome = !*chrome; } }, cx).into_any_element()];
+            options.push(div().px(px(14.0)).py(px(10.0)).flex().flex_col().gap(px(6.0))
+                .child(div().text_size(crate::panels::scale::px(13.0)).child("Hidden skills"))
+                .child(faint("Comma-separated names. Claude Code’s settings.json takes precedence."))
+                .child(Input::new(skills_field)).into_any_element());
+            for found in costly { options.push(div().px(px(14.0)).child(warn(format!("{} is set in {}. {}", found.name, found.source, found.effect))).into_any_element()); }
+            body = body.child(settings_group("CLAUDE CODE", None, options));
+        }
+        body = body.child(self.adapter_features(harness));
+        Some(body.into_any_element())
+    }
 
-        let body: Div = match (picking.harness, &picking.search) {
-            (Harness::Claude, search) => {
-                let enabled = subagents.enabled.contains(&Harness::Claude);
-                let mut col = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.0))
-                    .w_full()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(logos::draw(&logos::CLAUDE, 16.0, theme().primary))
-                            .child(div().text_size(scaled(15.0)).font_weight(FontWeight::SEMIBOLD).child("Claude Code")),
-                    )
-                    .child(faint("Uses your existing Claude Code sign-in and configuration."))
-                    .child(switch_row(
-                        "harness-dialog-claude-on",
-                        "Enable Claude Code",
-                        None,
-                        enabled,
-                        |ws, _, cx| flip_harness_enabled(ws, Harness::Claude, cx),
-                        cx,
-                    ))
-                    .child(self.subagent_controls(Harness::Claude, cx))
-                    .child(switch_row(
-                        "harness-dialog-claude-chrome",
-                        "Claude in Chrome",
-                        Some("New sessions start with browser integration (--chrome)".into()),
-                        *chrome,
-                        |ws, _, _| {
-                            if let Some(Modal::Settings { chrome, .. }) = ws.modal.as_mut() {
-                                *chrome = !*chrome;
-                            }
-                        },
-                        cx,
-                    ));
-
-                col = col.child(self.model_list(Harness::Claude, search, cx));
-
-                // m4code trims the extras itself (trim::FLUFF), per session; what's left here are the user's own settings.
-                for found in costly {
-                    col = col.child(warn(format!("{} is set in {}. {}", found.name, found.source, found.effect)));
-                }
-                col.child(div().flex().flex_col().mt(px(4.0)).gap(px(4.0)).child(section_label("CLAUDE CODE PATH")).child(executable_field(claude, self)))
-                    .child(div().mt(px(4.0)).child(section_label("SKILLS TO TURN OFF IN CLAUDE CODE")))
-                    .child(faint("Comma-separated skill names to hide from Claude Code. Entries in settings.json take precedence."))
-                    .child(Input::new(skills_field))
-            }
-            (harness, search) => {
-                let agent = harness.agent().expect("non-Claude harness has an Agent");
-                let provider = agent.provider();
-                let key = agent.key();
-                let enabled = subagents.enabled.contains(&harness);
-                let top = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .w_full()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(logos::draw(logos::for_harness(harness), 16.0, theme().primary))
-                            .child(div().text_size(scaled(15.0)).font_weight(FontWeight::SEMIBOLD).child(provider.name)),
-                    )
-                    .child(faint(format!("Uses your existing {} sign-in and configuration.", harness.name())))
-                    .child(switch_row(
-                        gpui::SharedString::from(format!("harness-dialog-{key}-enabled")),
-                        format!("Enable {}", provider.name),
-                        None,
-                        enabled,
-                        move |ws, _, cx| flip_harness_enabled(ws, harness, cx),
-                        cx,
-                    ))
-                    .child(self.subagent_controls(harness, cx));
-                let models = self.model_list(harness, search, cx);
-                div().flex().flex_col().gap(px(12.0)).w_full().child(top).child(models)
-            }
-        };
-
-        let card = crate::panels::ui::popover::dialog("agent-dialog")
-            .tab_group()
-            .w(scaled(680.0).min(viewport.width - px(48.0)))
-            .h(scaled(620.0).min(viewport.height - px(48.0)))
-            .p(px(22.0))
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
-                if ev.keystroke.key == "escape" {
-                    ws.close_harness_dialog(window, cx);
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .child(crate::panels::ui::popover::tab_boundary("harness-tab-start", &self.harness_tab_cycle.start))
-            .child(self.harness_dialog_scroll.wire(div().id("agent-dialog-body").flex_1().min_h_0(), window).flex().flex_col().gap(px(12.0)).child(body))
-            .child(div().flex().justify_end().child(btn::text("agent-dialog-done", "Done", true).on_click(cx.listener(|ws, _: &ClickEvent, window, cx| {
-                ws.close_harness_dialog(window, cx);
-                cx.notify();
-            }))))
-            .child(crate::panels::ui::popover::tab_boundary("harness-tab-end", &self.harness_tab_cycle.end));
-        Some(
-            deferred(
-                div()
-                    .id("agent-dialog-backdrop")
-                    .occlude()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(theme().backdrop)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                        ws.close_harness_dialog(window, cx);
-                        cx.notify();
-                    }))
-                    .child(card)
-                    .focus_trap("harness-dialog-focus", &picking.focus),
-            )
-            .with_priority(30)
-            .into_any_element(),
-        )
+    fn adapter_features(&self, harness: Harness) -> Div {
+        let rows = adapter_feature_rows(harness).into_iter().map(|(label, available, status, reason)| {
+            div().px(px(14.0)).py(px(7.0)).flex().items_start().gap(px(10.0))
+                .child(icon(if available { IconName::Check } else { IconName::X }, 13.0)
+                    .text_color(if available { theme().muted_foreground } else { theme().subtle_foreground }))
+                .child(div().flex_1().min_w_0().flex().flex_col().gap(px(3.0))
+                    .child(div().text_size(crate::panels::scale::px(12.0)).child(label))
+                    .children(reason.map(faint)))
+                .child(faint(status)).into_any_element()
+        }).collect();
+        div().flex().flex_col().gap(px(8.0))
+            .child(settings_group("ADAPTER FEATURES", None, rows))
+            .child(div().px(px(14.0)).child(faint("Reported by the adapter. Availability can also depend on session commands, authentication and your settings.")))
     }
 
     /// The Projects section on the Projects page: every project in the sidebar's order, to rename, move, remove, or
@@ -578,6 +461,22 @@ pub fn executable_field(input: &gpui::Entity<InputState>, ws: &Workspace) -> Div
 #[cfg(test)]
 mod tests {
     #[test]
+    fn feature_checklist_uses_adapter_capabilities_and_keeps_user_only_handoffs_distinct() {
+        for harness in Harness::registered() {
+            let rows = adapter_feature_rows(harness);
+            let caps = harness.adapter().capabilities;
+            assert_eq!(rows.iter().find(|r| r.0 == "Rewind messages").unwrap().1, caps.rewind.allowed());
+            assert_eq!(rows.iter().find(|r| r.0 == "Background text generation").unwrap().1, caps.text_generation.allowed());
+        }
+        #[cfg(feature = "adapter-antigravity")]
+        {
+            let rows = adapter_feature_rows(Harness::Antigravity);
+            assert!(rows.iter().find(|r| r.0 == "Hand off to another harness").unwrap().1);
+            assert!(!rows.iter().find(|r| r.0 == "Automatic outgoing handoff").unwrap().1);
+        }
+    }
+
+    #[test]
     fn harness_subtitles_use_the_same_subagent_status_for_every_provider() {
         let form = crate::app::HarnessesForm {
             enabled: Harness::ALL.to_vec(),
@@ -585,7 +484,7 @@ mod tests {
             claude_models: vec![], claude_subagents: Default::default(), picking: None,
         };
         for harness in Harness::registered() {
-            assert_eq!(harness_status(harness, true, &form, &Lookup::default(), 2).0, "Enabled · 2 models · subagents on");
+            assert_eq!(harness_status(harness, true, &form, &Lookup::default(), 2).0, "Enabled · 2 models · cross-harness subagents on");
         }
     }
     #[test]

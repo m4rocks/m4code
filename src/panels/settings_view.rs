@@ -1,4 +1,5 @@
-//! The Settings modal: its navigation rail and the General, Worktrees and feature pages with their rows.
+//! The Settings modal: its navigation rail, page header (with the way back from a harness's settings) and the
+//! General, Worktrees and feature pages with their rows, laid out as flat sections.
 //! The pages that list things to act on (Projects, Harnesses) are in `settings_pages`.
 
 use gpui::{
@@ -22,12 +23,11 @@ use crate::panels::ui::switch::switch;
 use crate::panels::widgets::{Anchor, Dropdown, icon};
 use crate::panels::ui::button as btn;
 use crate::panels::ui::kbd::kbd;
-use crate::panels::ui::label::section_label;
 use crate::panels::ui::popover;
 use gpui_kit::base::FocusTrapElement;
 
-/// Split-pane Settings window: left navigation rail with icons + version footer, right scrollable page with grouped
-/// section cards and a footer explaining when changes apply.
+/// Split-pane Settings window: left navigation rail with icons + version footer, right scrollable page with flat
+/// sections and a footer explaining when changes apply. A harness opened from Harnesses shows inline in that page.
 pub(super) fn render_settings_card(
     ws: &Workspace,
     viewport: gpui::Size<gpui::Pixels>,
@@ -35,12 +35,13 @@ pub(super) fn render_settings_card(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let (page, worktrees, scroll) = (ws.settings_page, &ws.worktrees_page, &ws.settings_scroll);
-    let Some(Modal::Settings { shell, default_model, text_generation_model, effort, permission, updates, scale, follow_up, auto_compact, auto_compact_threshold, usage_display, notify_model_on_limit, auto_handoff_on_limit, auto_handoff_model, m4code_off, skill_search, skill_filter, list_focus, renaming, .. }) = &ws.modal else {
+    let Some(Modal::Settings { shell, default_model, text_generation_model, effort, permission, updates, scale, follow_up, auto_compact, auto_compact_threshold, usage_display, notify_model_on_limit, auto_handoff_on_limit, auto_handoff_model, m4code_off, skill_search, skill_filter, list_focus, renaming, subagents, .. }) = &ws.modal else {
         return div().id("modal-card").into_any_element();
     };
     let (updates, scale, follow_up, auto_compact, auto_compact_threshold, usage_display, notify_model_on_limit, auto_handoff_on_limit) = (*updates, *scale, *follow_up, *auto_compact, *auto_compact_threshold, *usage_display, *notify_model_on_limit, *auto_handoff_on_limit);
+    // The harness whose settings show inline on the Harnesses page, in place of the list.
+    let harness_detail = subagents.picking.as_ref().map(|picking| picking.harness).filter(|_| page == SettingsPage::Harnesses);
     let scaled = crate::panels::scale::px;
-    let faint = |text: String| div().text_size(scaled(11.5)).text_color(theme().subtle_foreground).child(text);
 
     let content: AnyElement = match page {
         SettingsPage::General => {
@@ -111,20 +112,11 @@ pub(super) fn render_settings_card(
                     row_shell(
                         "Auto-compact threshold",
                         Some("Compact automatically once context usage reaches this level"),
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .p(px(2.0))
-                            .rounded(px(6.0))
-                            .bg(theme().background)
-                            .border_1()
-                            .border_color(theme().panel_border)
-                            .child(compaction_step("compact-threshold-down", "−", -(crate::harness::compaction::THRESHOLD_STEP as i64), auto_compact_threshold, cx))
-                            .child(div().w(px(42.0)).flex().justify_center().text_size(scaled(12.0)).text_color(theme().foreground).child(format!("{auto_compact_threshold}%")))
-                            .child(compaction_step("compact-threshold-up", "+", crate::harness::compaction::THRESHOLD_STEP as i64, auto_compact_threshold, cx))
-                            .into_any_element(),
+                        stepper(
+                            compaction_step("compact-threshold-down", "−", -(crate::harness::compaction::THRESHOLD_STEP as i64), auto_compact_threshold, cx),
+                            format!("{auto_compact_threshold}%"),
+                            compaction_step("compact-threshold-up", "+", crate::harness::compaction::THRESHOLD_STEP as i64, auto_compact_threshold, cx),
+                        ),
                     )
                     .into_any_element(),
                 );
@@ -171,20 +163,11 @@ pub(super) fn render_settings_card(
                 row_shell(
                     "Interface scale",
                     Some("Adjusts UI text and terminal font size"),
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .p(px(2.0))
-                        .rounded(px(6.0))
-                        .bg(theme().background)
-                        .border_1()
-                        .border_color(theme().panel_border)
-                        .child(scale_step("scale-down", "−", -(crate::panels::scale::STEP as i32), cx))
-                        .child(div().w(px(42.0)).flex().justify_center().text_size(scaled(12.0)).text_color(theme().foreground).child(format!("{scale}%")))
-                        .child(scale_step("scale-up", "+", crate::panels::scale::STEP as i32, cx))
-                        .into_any_element(),
+                    stepper(
+                        scale_step("scale-down", "−", -(crate::panels::scale::STEP as i32), cx),
+                        format!("{scale}%"),
+                        scale_step("scale-up", "+", crate::panels::scale::STEP as i32, cx),
+                    ),
                 )
                 .into_any_element(),
                 row_shell(
@@ -250,17 +233,14 @@ pub(super) fn render_settings_card(
                 updates_row,
             ];
 
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(18.0))
+            sections()
                 .child(settings_group("MODELS & DEFAULTS", None, defaults_rows))
                 .child(settings_group("CHAT & AUTOMATION", None, chat_rows))
                 .child(settings_group("APPEARANCE", None, appearance_rows))
                 .child(settings_group("SYSTEM & UPDATES", None, system_rows))
                 .into_any_element()
         }
-        SettingsPage::Harnesses => ws.harnesses_page(cx).into_any_element(),
+        SettingsPage::Harnesses => ws.render_harness_settings(window, cx).unwrap_or_else(|| ws.harnesses_page(cx).into_any_element()),
         SettingsPage::Skills => ws.skills_page(skill_filter, skill_search, cx).into_any_element(),
         SettingsPage::M4codeTools => {
             let rows: Vec<AnyElement> = Feature::ALL
@@ -279,26 +259,26 @@ pub(super) fn render_settings_card(
                         .into_any_element()
                 })
                 .collect();
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(10.0))
-                .child(settings_group("BUILT-IN MCP TOOLS", None, rows))
-                .child(faint("Active sessions keep their current tools. Changes apply to new sessions and after compaction.".into()))
+            sections()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.0))
+                        .child(settings_group("BUILT-IN MCP TOOLS", None, rows))
+                        .child(note("Active sessions keep their current tools. Changes apply to new sessions and after compaction.")),
+                )
                 .into_any_element()
         }
         SettingsPage::Keyboard => keyboard_page().into_any_element(),
-        SettingsPage::Projects => div()
-            .flex()
-            .flex_col()
-            .gap(px(20.0))
+        SettingsPage::Projects => sections()
             .child(ws.projects_section(renaming.as_ref(), cx))
             .child(worktrees_section(worktrees, window, cx))
             .into_any_element(),
     };
 
     let nav = SettingsPage::ALL.into_iter().enumerate().fold(
-        div().id("settings-categories").track_focus(&list_focus.clone().tab_stop(true)).flex().flex_col().gap(px(2.0)),
+        div().id("settings-categories").track_focus(&list_focus.clone().tab_stop(true)).flex().flex_col().gap(px(1.0)),
         |list, (i, p)| {
             let selected = p == page;
             let focus = list_focus.clone();
@@ -309,14 +289,14 @@ pub(super) fn render_settings_card(
                     .px(px(10.0))
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(px(9.0))
                     .rounded(px(6.0))
                     .text_size(scaled(13.0))
                     .font_weight(if selected { FontWeight::MEDIUM } else { FontWeight::NORMAL })
                     .text_color(if selected { theme().foreground } else { theme().muted_foreground })
                     .when(selected, |d| d.bg(theme().row_active))
+                    .when(!selected, |d| d.hover(|s| s.bg(theme().row_hover).text_color(theme().foreground)))
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme().row_hover))
                     .child(icon(p.icon(), 13.5).text_color(if selected { theme().primary } else { theme().subtle_foreground }))
                     .child(p.label())
                     .on_click(cx.listener(move |ws, _: &ClickEvent, window, cx| {
@@ -328,73 +308,101 @@ pub(super) fn render_settings_card(
     );
 
     let sidebar = div()
-        .w(scaled(204.0))
+        .w(scaled(200.0))
         .flex_none()
         .h_full()
         .bg(theme().inset)
         .border_r_1()
         .border_color(theme().border)
-        .p(px(14.0))
         .flex()
         .flex_col()
-        .justify_between()
         .child(
             div()
+                .flex_1()
+                .min_h_0()
+                .px(px(10.0))
+                .pt(px(18.0))
                 .flex()
                 .flex_col()
-                .gap(px(10.0))
-                .child(div().px(px(10.0)).pt(px(4.0)).text_size(scaled(14.5)).font_weight(FontWeight::SEMIBOLD).text_color(theme().foreground).child("Settings"))
+                .gap(px(12.0))
+                .child(div().px(px(10.0)).text_size(scaled(14.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme().foreground).child("Settings"))
                 .child(nav),
         )
         .child(
             div()
-                .px(px(10.0))
-                .pt(px(12.0))
+                .flex_none()
+                .px(px(20.0))
+                .py(px(12.0))
                 .border_t_1()
                 .border_color(theme().border)
                 .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(div().text_size(scaled(11.5)).font_weight(FontWeight::MEDIUM).text_color(theme().muted_foreground).child(format!("m4code {}", env!("CARGO_PKG_VERSION"))))
-                .child(div().text_size(scaled(10.5)).text_color(theme().subtle_foreground).child("Independent project")),
+                .items_center()
+                .gap(px(6.0))
+                .text_size(scaled(11.0))
+                .child(div().font_weight(FontWeight::MEDIUM).text_color(theme().muted_foreground).child(format!("m4code {}", env!("CARGO_PKG_VERSION")))),
         );
 
-    let page_header = div()
-        .flex()
-        .flex_col()
-        .gap(px(3.0))
-        .pb(px(14.0))
-        .border_b_1()
-        .border_color(theme().border)
-        .child(div().text_size(scaled(17.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme().foreground).child(page.label()))
-        .child(div().text_size(scaled(12.0)).text_color(theme().muted_foreground).child(page.subtitle()));
+    let page_header = match harness_detail {
+        Some(harness) => div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .ml(px(-8.0))
+                    .text_size(scaled(12.0))
+                    .text_color(theme().subtle_foreground)
+                    .child(
+                        btn::button("settings-harness-back", Some(IconName::ArrowLeft), SettingsPage::Harnesses.label(), btn::Variant::Ghost, btn::Size::Xs)
+                            .accessibility_label("Back to Harnesses")
+                            .on_click(cx.listener(|ws, _: &ClickEvent, window, cx| {
+                                ws.close_harness_dialog(window, cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child("/")
+                    .child(div().pl(px(4.0)).text_color(theme().muted_foreground).child(harness.name())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(9.0))
+                    .child(crate::panels::logos::draw(crate::panels::logos::for_harness(harness), 17.0, theme().primary))
+                    .child(page_title(harness.name())),
+            )
+            .child(page_subtitle(format!("Models, subagents, and settings for {}.", harness.name()))),
+        None => div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(page_title(page.label()))
+            .child(page_subtitle(page.subtitle())),
+    };
 
     let footer = div()
         .flex_none()
-        .px(px(24.0))
+        .px(px(28.0))
         .py(px(12.0))
         .border_t_1()
         .border_color(theme().border)
-        .bg(theme().background)
         .flex()
         .items_center()
         .justify_between()
+        .text_size(scaled(11.0))
+        .text_color(theme().subtle_foreground)
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(6.0))
-                .text_size(scaled(11.0))
-                .text_color(theme().subtle_foreground)
                 .child(kbd("Esc"))
-                .child("close"),
+                .child(if harness_detail.is_some() { "back" } else { "close" }),
         )
-        .child(
-            div()
-                .text_size(scaled(11.0))
-                .text_color(theme().subtle_foreground)
-                .child("Preferences save when you close Settings"),
-        );
+        .child("Preferences save when you close Settings");
 
     let main_pane = div()
         .flex_1()
@@ -406,12 +414,13 @@ pub(super) fn render_settings_card(
         .child(
             scroll.wire(div().id("settings-page").flex_1().min_h_0(), window).child(
                 div()
-                    .px(px(26.0))
-                    .py(px(20.0))
+                    .px(px(14.0))
+                    .pt(px(18.0))
+                    .pb(px(20.0))
                     .flex()
                     .flex_col()
-                    .gap(px(18.0))
-                    .child(page_header)
+                    .gap(px(16.0))
+                    .child(page_header.px(px(14.0)))
                     .child(content),
             ),
         )
@@ -437,6 +446,38 @@ pub(super) fn render_settings_card(
         .into_any_element()
 }
 
+/// The stack of sections on a Settings page, spaced so each section reads on its own without a card around it.
+fn sections() -> gpui::Div {
+    div().flex().flex_col().gap(px(20.0))
+}
+
+/// The page title in the header, and the line under it.
+fn page_title(text: impl Into<gpui::SharedString>) -> gpui::Div {
+    div().text_size(crate::panels::scale::px(17.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme().foreground).child(text.into())
+}
+
+fn page_subtitle(text: impl Into<gpui::SharedString>) -> gpui::Div {
+    div().text_size(crate::panels::scale::px(12.0)).text_color(theme().muted_foreground).child(text.into())
+}
+
+/// A faint footnote under a section, indented to line up with the rows' text.
+fn note(text: impl Into<gpui::SharedString>) -> gpui::Div {
+    div().px(px(14.0)).text_size(crate::panels::scale::px(11.5)).text_color(theme().subtle_foreground).child(text.into())
+}
+
+/// A − value + control with no box around it, the value in a fixed width so the buttons don't move.
+fn stepper(down: impl IntoElement, value: String, up: impl IntoElement) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(2.0))
+        .child(down)
+        .child(div().w(px(44.0)).flex().justify_center().text_size(crate::panels::scale::px(12.5)).text_color(theme().foreground).child(value))
+        .child(up)
+        .into_any_element()
+}
+
 fn row_labels(title: &str, subtitle: Option<&str>) -> gpui::Div {
     let scaled = crate::panels::scale::px;
     div()
@@ -449,11 +490,16 @@ fn row_labels(title: &str, subtitle: Option<&str>) -> gpui::Div {
         .children(subtitle.map(|s| div().text_size(scaled(11.5)).text_color(theme().subtle_foreground).child(s.to_string())))
 }
 
-
+/// A row with its labels on the left and a control on the right, padded like the switch rows beside it.
 fn row_shell(title: &str, subtitle: Option<&str>, trailing: AnyElement) -> gpui::Div {
+    // Matches the focusable rows (switches, pickers): their 1px focus border and tight line height.
     div()
+        .text_size(crate::panels::scale::px(13.0))
+        .line_height(gpui::relative(1.0))
+        .border_1()
+        .border_color(gpui::transparent_black())
         .px(px(14.0))
-        .py(px(10.0))
+        .py(px(8.0))
         .flex()
         .items_center()
         .justify_between()
@@ -462,7 +508,7 @@ fn row_shell(title: &str, subtitle: Option<&str>, trailing: AnyElement) -> gpui:
         .child(trailing)
 }
 
-/// Settings → Keyboard: each group of shortcuts in its own card, what it does on the left and its keys on the right.
+/// Settings → Keyboard: each group of shortcuts in its own section, what it does on the left and its keys on the right.
 fn keyboard_page() -> gpui::Div {
     let rows = crate::app::keymap::shortcuts();
     let mut groups: Vec<(&str, Vec<AnyElement>)> = vec![];
@@ -473,29 +519,16 @@ fn keyboard_page() -> gpui::Div {
             _ => groups.push((row.group, vec![line])),
         }
     }
-    groups.into_iter().fold(div().flex().flex_col().gap(px(18.0)), |page, (group, lines)| page.child(settings_group(group.to_uppercase(), None, lines)))
+    groups.into_iter().fold(sections(), |page, (group, lines)| page.child(settings_group(group.to_uppercase(), None, lines)))
 }
 
 /// The Worktrees section on the Projects page: worktree folders m4code made, grouped by repository.
 fn worktrees_section(page: &crate::app::WorktreesPage, window: &mut Window, cx: &mut Context<Workspace>) -> gpui::Div {
     let scaled = crate::panels::scale::px;
     let faint = |text: String| div().text_size(scaled(11.5)).text_color(theme().subtle_foreground).child(text);
+    let empty_row = |msg: &str| div().px(px(14.0)).py(px(12.0)).text_size(scaled(12.0)).text_color(theme().subtle_foreground).child(msg.to_string()).into_any_element();
     let reveal = if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in File Explorer" };
-    let empty_card = |msg: &str| {
-        settings_group(
-            "WORKTREES",
-            None,
-            vec![
-                div()
-                    .px(px(14.0))
-                    .py(px(14.0))
-                    .text_size(scaled(12.0))
-                    .text_color(theme().subtle_foreground)
-                    .child(msg.to_string())
-                    .into_any_element(),
-            ],
-        )
-    };
+    let empty_card = |msg: &str| settings_group("WORKTREES", None, vec![empty_row(msg)]);
     let Some(stored) = &page.stored else {
         return empty_card("Looking for worktrees…");
     };
@@ -515,9 +548,15 @@ fn worktrees_section(page: &crate::app::WorktreesPage, window: &mut Window, cx: 
             rows.push(
                 div()
                     .px(px(14.0))
-                    .py(px(7.0))
-                    .bg(theme().inset)
-                    .child(section_label(heading))
+                    .pt(px(12.0))
+                    .pb(px(4.0))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(scaled(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme().muted_foreground)
+                    .child(heading)
                     .into_any_element(),
             );
         }
@@ -590,21 +629,21 @@ fn worktrees_section(page: &crate::app::WorktreesPage, window: &mut Window, cx: 
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(8.0))
         .child(settings_group("WORKTREES", None, rows))
-        .child(faint("Worktrees m4code makes live in its own data folder, outside your repositories.".into()))
+        .child(note("Worktrees m4code makes live in its own data folder, outside your repositories."))
 }
 
-/// Default model row inside the New sessions card; clicking opens the universal model dropdown anchored to its pill.
+/// Default model row in Models & defaults; clicking opens the universal model dropdown anchored to its value.
 fn default_model_row(current: &crate::harness::CatalogModel, open: bool, cx: &mut Context<Workspace>) -> impl IntoElement {
     settings_picker_row("settings-default-model", ("Default model", "Model used when starting a new session"),
         format!("{}: {}", current.harness.name(), current.name), open,
         |ws, at, window, cx| ws.open_settings_model_picker(at, crate::app::SettingsModelTarget::Default, window, cx), cx)
 }
 
-fn settings_picker_row(
+pub(super) fn settings_picker_row(
     id: &'static str,
-    (label, subtitle): (&'static str, &'static str),
+    (label, subtitle): (&str, &str),
     current: String,
     open: bool,
     on_open: impl Fn(&mut Workspace, Dropdown, &mut Window, &mut Context<Workspace>) + 'static,
@@ -616,15 +655,17 @@ fn settings_picker_row(
     btn::focusable(id)
         .relative()
         .px(px(14.0))
-        .py(px(11.0))
+        .py(px(8.0))
         .flex()
         .items_center()
         .justify_between()
         .gap(px(12.0))
         .cursor_pointer()
+        .when(open, |row| row.bg(theme().row_active))
         .hover(|s| s.bg(theme().accent))
         .child(row_anchor.probe())
         .child(row_labels(label, Some(subtitle)))
+        // The current value as a plain trigger: no box, the whole row takes the click and lights up while it's open.
         .child(
             div()
                 .relative()
@@ -632,13 +673,8 @@ fn settings_picker_row(
                 .flex()
                 .items_center()
                 .gap(px(6.0))
-                .px(px(9.0))
                 .h(px(26.0))
-                .rounded(px(6.0))
-                .bg(if open { theme().row_active } else { theme().background })
-                .border_1()
-                .border_color(if open { theme().primary } else { theme().panel_border })
-                .text_size(scaled(12.0))
+                .text_size(scaled(12.5))
                 .child(pill_anchor.probe())
                 .child(div().max_w(px(220.0)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(theme().primary).child(current))
                 .child(icon(IconName::ChevronDown, 10.5).text_color(theme().subtle_foreground)),
@@ -656,7 +692,7 @@ fn step_button(id: &'static str, label: &'static str, enabled: bool, apply: impl
         .on_click(cx.listener(move |ws, _: &ClickEvent, _, cx| { apply(ws, cx); cx.notify(); }))
 }
 
-fn scale_step(id: &'static str, label: &'static str, by: i32, cx: &mut Context<Workspace>) -> impl IntoElement {
+fn scale_step(id: &'static str, label: &'static str, by: i32, cx: &mut Context<Workspace>) -> gpui_kit::base::Button {
     let current = crate::panels::scale::percent();
     let next = (current as i32 + by).clamp(crate::panels::scale::MIN as i32, crate::panels::scale::MAX as i32) as u32;
     step_button(id, label, next != current, move |ws, _| {
@@ -664,7 +700,7 @@ fn scale_step(id: &'static str, label: &'static str, by: i32, cx: &mut Context<W
     }, cx)
 }
 
-fn compaction_step(id: &'static str, label: &'static str, by: i64, current: u64, cx: &mut Context<Workspace>) -> impl IntoElement {
+fn compaction_step(id: &'static str, label: &'static str, by: i64, current: u64, cx: &mut Context<Workspace>) -> gpui_kit::base::Button {
     let next = crate::harness::compaction::clamp_threshold((current as i64 + by).max(0) as u64);
     step_button(id, label, next != current, move |ws, _| {
         if let Some(Modal::Settings { auto_compact_threshold, .. }) = ws.modal.as_mut() { *auto_compact_threshold = next; }

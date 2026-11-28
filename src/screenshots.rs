@@ -26,7 +26,9 @@ fn capture() -> Result<()> {
     let session_scenario = matches!(scenario.as_str(), "session" | "session-short" | "session-done" | "session-auth" | "session-no-compact" | "session-scrolled" | "session-quotes" | "session-quotes-menu" | "session-events" | "toast" | "review" | "review-hover");
     let shortcut = match scenario.as_str() {
         "home" | "dashboards-disabled" | "picker" | "context-menu" | "github" | "github-wide" | "github-issues" | "editor" | "session" | "session-short" | "session-done" | "session-auth" | "session-no-compact" | "session-scrolled" | "session-quotes" | "session-quotes-menu" | "session-events" | "toast" | "harnesses" | "harness-dialog" | "review" | "review-hover" => None,
+        "usage" => None,
         "settings" => Some(Keystroke::parse("secondary-,").expect("Settings shortcut")),
+        name if name.starts_with("settings-") => None,
         _ => anyhow::bail!("unknown screenshot scenario {scenario:?}; use home, dashboards-disabled, settings, picker, context-menu, github, github-wide, editor, session, session-short, session-done, session-no-compact, session-scrolled, toast, harnesses, harness-dialog, review or review-hover"),
     };
 
@@ -49,6 +51,18 @@ fn capture() -> Result<()> {
     settings.auto_compact_threshold = 75;
     settings.auto_compact = scenario != "session-no-compact";
     settings.custom_subagents = crate::harness::subagents::CustomSubagents(Default::default());
+    if scenario == "usage" {
+        use crate::{harness::{Harness, limits::Pool}, store::{RateLimit, UsageLimits}};
+        settings.enabled_harnesses = Some(vec![Harness::Antigravity]);
+        let now = crate::store::now();
+        store.data.subagent_limits.insert("antigravity".into(), ["Gemini Models", "Gemini 4 Argon", "Claude and GPT models"].into_iter().map(|name| Pool {
+            name: name.into(),
+            usage: UsageLimits {
+                five_hour: Some(RateLimit { utilization: Some(0.0), resets_at: Some(now + 5 * 3600), seen_at: now }),
+                seven_day: Some(RateLimit { utilization: Some(0.4), resets_at: Some(now + 4 * 86400), seen_at: now }),
+            },
+        }).collect());
+    }
     if matches!(scenario.as_str(), "github" | "github-wide" | "github-issues") {
         // Request a wide pane; github-wide also widens the window to leave it enough room.
         store.data.layout.right_gh_w = Some(900.0);
@@ -190,12 +204,50 @@ fn capture() -> Result<()> {
         cx.update_window(window, |_, window, app| workspace.update(app, |ws, cx| {
             ws.act(crate::app::Act::OpenSettings, window, cx);
             ws.settings_page = crate::app::SettingsPage::Harnesses;
-            // Antigravity's popup: its subagent switches, which start off, and the terms warning.
+            // Antigravity’s inline detail page and its terms warning.
             if scenario == "harness-dialog" {
                 ws.open_harness_dialog(crate::harness::Harness::Antigravity, window, cx);
             }
         }))?;
         cx.run_until_parked();
+    }
+    if let Some(detail) = scenario.strip_prefix("settings-") {
+        cx.update_window(window, |_, window, app| workspace.update(app, |ws, cx| {
+            use crate::app::{Act, SettingsPage};
+            use crate::harness::Harness;
+            ws.act(Act::OpenSettings, window, cx);
+            let page = match detail {
+                "general" => SettingsPage::General,
+                "skills" | "skills-browse" => SettingsPage::Skills,
+                "tools" => SettingsPage::M4codeTools,
+                "projects" => SettingsPage::Projects,
+                "keyboard" => SettingsPage::Keyboard,
+                _ => SettingsPage::Harnesses,
+            };
+            ws.set_settings_page(page, cx);
+            if detail == "skills-browse" { ws.skills_page.tab = crate::app::SkillsTab::Browse; }
+            let harness = match detail {
+                "harness-claude" => Some(Harness::Claude),
+                "harness-codex" => Some(Harness::Codex),
+                "harness-opencode" => Some(Harness::OpenCode),
+                "harness-antigravity" | "harness-models" | "harness-features" => Some(Harness::Antigravity),
+                _ => None,
+            };
+            if let Some(harness) = harness {
+                ws.open_harness_dialog(harness, window, cx);
+                if detail == "harness-models" {
+                    let at = crate::panels::widgets::Dropdown::at(gpui::point(gpui::px(1120.0), gpui::px(560.0)));
+                    ws.open_harness_models_picker(harness, at, window, cx);
+                }
+            }
+        }))?;
+        cx.run_until_parked();
+        if detail == "harness-features" {
+            cx.update_window(window, |_, _, app| workspace.update(app, |ws, _| {
+                ws.settings_scroll.scroll_to(gpui::point(gpui::px(0.0), gpui::px(-10000.0)));
+            }))?;
+            cx.run_until_parked();
+        }
     }
     if scenario == "editor" {
         let file = dunce::canonicalize(&project)?.join("src").join("main.rs");

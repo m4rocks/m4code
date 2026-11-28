@@ -321,6 +321,36 @@ fn command_palette_lists_only_active_sessions() {
 }
 
 #[test]
+#[ignore = "drives the Settings workspace"]
+fn settings_harness_details_keep_navigation_and_escape_inside_settings() {
+    let _data = crate::datadir::own_folder();
+    let mut cx = TestAppContext::single();
+    let (window, ws) = keyboard_workspace(&mut cx);
+    cx.update_window(window, |_, window, app| {
+        ws.update(app, |ws, cx| {
+            ws.act(Act::OpenSettings, window, cx);
+            ws.set_settings_page(crate::app::SettingsPage::Harnesses, cx);
+            ws.open_harness_dialog(Harness::Antigravity, window, cx);
+            let at = crate::panels::widgets::Dropdown::at(gpui::point(gpui::px(20.0), gpui::px(20.0)));
+            ws.open_harness_models_picker(Harness::Antigravity, at, window, cx);
+        });
+        window.draw(app).clear(app);
+    }).unwrap();
+    let mut visual = VisualTestContext::from_window(window, &cx);
+    assert!(ws.read_with(&visual, |ws, _| matches!(ws.picker_kind(), Some(WorkspacePicker::HarnessModels { harness: Harness::Antigravity, .. }))));
+    visual.simulate_keystrokes("escape");
+    assert!(ws.read_with(&visual, |ws, _| ws.picker.is_none() && ws.harness_dialog_open()), "Escape closes the models dropdown first");
+    visual.simulate_keystrokes("escape");
+    assert!(ws.read_with(&visual, |ws, _| matches!(&ws.modal, Some(Modal::Settings { subagents, .. }) if subagents.picking.is_none())));
+    visual.update(|window, app| ws.update(app, |ws, cx| {
+        ws.open_harness_dialog(Harness::Codex, window, cx);
+        ws.set_settings_page(crate::app::SettingsPage::General, cx);
+        assert!(!ws.harness_dialog_open());
+        assert!(matches!(ws.modal, Some(Modal::Settings { .. })));
+    }));
+}
+
+#[test]
 #[ignore = "drives the workspace"]
 fn settings_tab_reaches_model_button_and_keyboard_opens_it() {
     let _data = crate::datadir::own_folder();

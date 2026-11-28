@@ -1,7 +1,7 @@
 //! Settings → Skills page: browse/install `SKILL.md` packages from `skills.sh`, toggle them globally or per project,
 //! and show which active harnesses receive synced symlinks.
 
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div, prelude::FluentBuilder, px};
 use gpui_kit::{assets::IconName, base::{Tab, Tabs}};
 use gpui_kit::component::input::{Input, InputState};
 
@@ -18,11 +18,11 @@ use crate::panels::ui::empty::empty_panel;
 use crate::panels::ui::skeleton::skeleton_rows;
 
 fn faint(text: impl Into<SharedString>) -> Div {
-    div().text_size(crate::panels::scale::px(11.0)).text_color(theme().subtle_foreground).child(text.into())
+    div().text_size(crate::panels::scale::px(11.5)).text_color(theme().subtle_foreground).child(text.into())
 }
 
 fn warn(text: impl Into<SharedString>) -> Div {
-    div().text_size(crate::panels::scale::px(11.0)).text_color(theme().warning).child(text.into())
+    div().text_size(crate::panels::scale::px(11.5)).text_color(theme().warning).child(text.into())
 }
 
 fn empty_state(text: impl Into<SharedString>) -> Div {
@@ -31,7 +31,7 @@ fn empty_state(text: impl Into<SharedString>) -> Div {
 
 fn search_group(input: &gpui::Entity<InputState>, action: Option<AnyElement>) -> Div {
     div().flex().flex_1().min_w_0().items_center().gap(px(6.0)).px(px(8.0)).py(px(3.0))
-        .rounded(px(7.0)).border_1().border_color(theme().panel_border)
+        .rounded(px(6.0)).border_1().border_color(theme().panel_border)
         .bg(theme().background)
         .child(div().flex_none().child(icon(IconName::Search, 14.0).text_color(theme().muted_foreground)))
         .child(div().flex_1().min_w_0().child(Input::new(input).appearance(false)))
@@ -43,8 +43,8 @@ fn skill_row(name: &str, description: &str, actions: Vec<AnyElement>) -> Div {
         .flex()
         .items_center()
         .gap(px(12.0))
-        .px(px(12.0))
-        .py(px(9.0))
+        .px(px(14.0))
+        .py(px(8.0))
         .child(div().flex_1().min_w_0().flex().flex_col().gap(px(3.0))
             .child(div().text_size(crate::panels::scale::px(13.0)).font_weight(FontWeight::MEDIUM).child(name.to_string()))
             .children((!description.is_empty()).then(|| faint(description.to_string()))))
@@ -56,40 +56,46 @@ impl Workspace {
         let state = &self.skills_page;
         let count = self.store.data.settings.skills.installed.len();
         let harnesses: Vec<_> = self.active_skill_harnesses(None).into_iter().map(|h| h.name()).collect();
+        // Underlined tabs on a hairline, like the rest of the page's flat sections, instead of a filled segmented box.
         let tabs = Tabs::new("skills-tabs")
-            .flex().items_center().gap(px(2.0)).p(px(3.0)).rounded(px(8.0))
-            .bg(theme().accent)
+            .flex().items_center().gap(px(16.0))
             .children([
                 ("skills-tab-installed", format!("Installed ({count})"), SkillsTab::Installed),
                 ("skills-tab-browse", "Browse".into(), SkillsTab::Browse),
             ].into_iter().enumerate().map(|(i, (id, label, tab))| {
                 Tab::new(id).set_position(i + 1, 2).selected(state.tab == tab)
-                    .cursor_pointer().h(px(28.0)).px(px(10.0)).rounded(px(6.0))
+                    .cursor_pointer().h(px(30.0)).flex().items_center().mb(px(-1.0))
+                    .border_b_2().border_color(gpui::transparent_black())
                     .text_color(theme().muted_foreground).text_size(crate::panels::scale::px(12.5))
                     .font_weight(FontWeight::MEDIUM)
-                    .styles(|styles| styles.selected(|s| s.bg(theme().background).text_color(theme().foreground)))
+                    .hover(|s| s.text_color(theme().foreground))
+                    .styles(|styles| styles.selected(|s| s.text_color(theme().foreground).border_color(theme().primary)))
                     .child(label)
                     .on_click(cx.listener(move |ws, _: &ClickEvent, window, cx| ws.act(Act::SetSkillsTab(tab), window, cx)))
             }));
         let header = div()
+            .px(px(14.0))
             .flex()
             .flex_wrap()
-            .items_center()
+            .items_end()
             .justify_between()
             .gap(px(8.0))
+            .border_b_1()
+            .border_color(theme().border)
             .child(tabs)
-            .child(faint(format!("Syncs to {}", harnesses.join(", "))));
+            .child(faint(format!("Syncs to {}", harnesses.join(", "))).pb(px(8.0)));
         let (content, key) = match state.tab {
             SkillsTab::Installed => (self.installed_skills(filter, cx), "skills-installed-content"),
             SkillsTab::Browse => (self.browse_skills(search, cx), "skills-browse-content"),
         };
-        div().flex().flex_col().gap(px(12.0)).child(header).child(self.skills_scope_row(cx))
+        div().flex().flex_col().gap(px(20.0)).child(header)
+            .child(settings_group("SCOPE", None, vec![self.skills_scope_row(cx).into_any_element()]))
             .child(fade_in(content, key, 150, 0.85))
     }
 
     fn installed_skills(&self, filter: &gpui::Entity<InputState>, cx: &mut Context<Self>) -> Div {
         let installed = &self.store.data.settings.skills;
-        let mut page = div().flex().flex_col().gap(px(12.0));
+        let mut page = div().flex().flex_col().gap(px(20.0));
         if installed.installed.is_empty() {
             page = page.child(settings_group("Installed skills", None, vec![
                 empty_state("No skills installed yet.")
@@ -140,7 +146,7 @@ impl Workspace {
                 ws.show_popular_skills(cx);
             })));
         }
-        let page = div().flex().flex_col().gap(px(12.0)).child(search_bar);
+        let page = div().flex().flex_col().gap(px(20.0)).child(search_bar);
         if state.loading {
             let status = state.search_query.as_ref().map_or_else(
                 || "Loading popular skills from skills.sh".into(),
@@ -285,6 +291,7 @@ impl Workspace {
     }
 
     /// Picker row choosing whether toggles and installs target Global or a specific project (opens universal dialog).
+    /// A flat row like Settings' other picker rows: it lights up while its picker is open.
     fn skills_scope_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.effective_skill_scope();
         let label = match &current {
@@ -298,17 +305,14 @@ impl Workspace {
         let open = matches!(self.picker_kind(), Some(WorkspacePicker::SkillsScope { .. }));
         div()
             .id("skills-scope")
-            .min_h(px(36.0))
-            .px(px(12.0))
-            .py(px(6.0))
+            .min_h(px(40.0))
+            .px(px(14.0))
+            .py(px(8.0))
             .flex()
             .items_center()
             .justify_between()
             .gap(px(12.0))
-            .rounded(px(8.0))
-            .bg(theme().card)
-            .border_1()
-            .border_color(if open { theme().primary } else { theme().panel_border })
+            .when(open, |row| row.bg(theme().row_active))
             .hover(|s| s.bg(theme().accent))
             .text_size(crate::panels::scale::px(13.0))
             .cursor_pointer()
@@ -319,7 +323,7 @@ impl Workspace {
                     .min_w_0()
                     .items_center()
                     .gap(px(6.0))
-                    .child(div().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().text_color(theme().primary).child(label))
+                    .child(div().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().text_size(crate::panels::scale::px(12.5)).text_color(theme().primary).child(label))
                     .child(div().flex_none().child(icon(IconName::ChevronDown, 11.0).text_color(theme().subtle_foreground))),
             )
             .dropdown_right(cx, |ws, at, window, cx| ws.open_skills_scope_picker(at, window, cx))

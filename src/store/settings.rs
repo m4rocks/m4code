@@ -1,5 +1,13 @@
 use super::*;
 
+/// Claude's older settings stored the two delegation switches independently.
+fn merged_subagent_access<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<crate::harness::SubagentAccess, D::Error> {
+    let mut access = crate::harness::SubagentAccess::deserialize(deserializer)?;
+    access.cross_harness &= access.on;
+    access.on = access.cross_harness;
+    Ok(access)
+}
+
 /// Where the window was last left, in logical pixels. `w`/`h` are the restore size while `maximized`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowGeom {
@@ -111,7 +119,7 @@ pub struct Settings {
     /// Agent types that run a task in another coding agent (Settings → Harnesses); Antigravity is opt-in.
     #[serde(default)]
     pub custom_subagents: crate::harness::subagents::CustomSubagents,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "merged_subagent_access")]
     pub claude_subagents: crate::harness::SubagentAccess,
     /// Last model list reported by Claude Code, used to populate the unified model picker before a session opens.
     #[serde(default)]
@@ -359,6 +367,19 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::FollowUp;
+
+    #[test]
+    fn claude_delegation_switches_merge_in_both_directions() {
+        for on in [false, true] {
+            for cross in [false, true] {
+                let saved = serde_json::json!({ "claude_subagents": { "on": on, "cross_harness": cross, "edits": false } });
+                let settings: super::Settings = serde_json::from_value(saved).unwrap();
+                assert_eq!(settings.claude_subagents.on, on && cross);
+                assert_eq!(settings.claude_subagents.cross_harness, on && cross);
+                assert!(!settings.claude_subagents.edits);
+            }
+        }
+    }
 
     #[test]
     fn auto_compact_settings_default_on_at_ninety_percent() {

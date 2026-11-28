@@ -22,6 +22,6 @@ pub fn switch(on: bool) -> Div {
 /// Shared focusable row for a switch, with label and switch supplied as children.
 pub fn row(id: impl Into<gpui::ElementId>) -> gpui_kit::base::Button {
     super::button::focusable(id)
-        .w_full().px(px(14.0)).py(px(11.0)).flex().items_center().justify_between().gap(px(12.0))
+        .w_full().px(px(14.0)).py(px(8.0)).flex().items_center().justify_between().gap(px(12.0))
         .text_size(crate::panels::scale::px(13.0)).cursor_pointer().hover(|s| s.bg(theme().accent))
 }
